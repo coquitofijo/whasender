@@ -111,7 +111,7 @@ export default function Campaigns() {
   };
 
   // Get available variables from selected list's contacts
-  const selectedList = lists.find(l => l.id === form.list_id);
+  const _selectedList = lists.find(l => l.id === form.list_id);
 
   return (
     <div>
