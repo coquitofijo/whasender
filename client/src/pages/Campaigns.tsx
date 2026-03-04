@@ -110,9 +110,6 @@ export default function Campaigns() {
     failed: 'bg-red-500/20 text-red-400',
   };
 
-  // Get available variables from selected list's contacts
-  const _selectedList = lists.find(l => l.id === form.list_id);
-
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
