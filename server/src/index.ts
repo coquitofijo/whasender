@@ -25,6 +25,29 @@ const allowedOrigins = CLIENT_URL.split(',').map(u => u.trim());
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
+// Auth
+const AUTH_USER = process.env.AUTH_USER || 'coquesito';
+const AUTH_PASS = process.env.AUTH_PASS || 'coquito2026';
+const AUTH_TOKEN = Buffer.from(`${AUTH_USER}:${AUTH_PASS}`).toString('base64');
+
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  if (username === AUTH_USER && password === AUTH_PASS) {
+    res.json({ token: AUTH_TOKEN });
+  } else {
+    res.status(401).json({ error: 'Credenciales incorrectas' });
+  }
+});
+
+app.use('/api', (req, res, next) => {
+  if (req.path === '/login') return next();
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (token !== AUTH_TOKEN) {
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+  next();
+});
+
 // Socket.IO
 const io = initSocketIO(server, allowedOrigins);
 
