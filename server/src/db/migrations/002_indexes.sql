@@ -1,0 +1,9 @@
+CREATE INDEX IF NOT EXISTS idx_contacts_list_id ON contacts(list_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone);
+CREATE INDEX IF NOT EXISTS idx_message_logs_campaign_id ON message_logs(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_message_logs_contact_id ON message_logs(contact_id);
+CREATE INDEX IF NOT EXISTS idx_message_logs_status ON message_logs(status);
+CREATE INDEX IF NOT EXISTS idx_campaigns_session_id ON campaigns(session_id);
+CREATE INDEX IF NOT EXISTS idx_campaigns_list_id ON campaigns(list_id);
+CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
+CREATE INDEX IF NOT EXISTS idx_session_auth_keys_session ON session_auth_keys(session_id);

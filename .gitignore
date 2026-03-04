@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+server/.env
+uploads/*
+!uploads/.gitkeep
+auth_info_*
+.claude
