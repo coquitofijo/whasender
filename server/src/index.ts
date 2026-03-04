@@ -22,7 +22,7 @@ const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 const allowedOrigins = CLIENT_URL.split(',').map(u => u.trim());
 
 // Middleware
-app.use(cors({ origin: allowedOrigins }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 // Auth
