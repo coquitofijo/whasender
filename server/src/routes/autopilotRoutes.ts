@@ -3,6 +3,17 @@ import { autopilotService } from '../services/autopilotService';
 
 const router = Router();
 
+// Get recent autopilot logs (persisted)
+router.get('/logs', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const logs = await autopilotService.getLogs(limit);
+    res.json(logs);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get autopilot config + assignments
 router.get('/config', async (_req: Request, res: Response) => {
   try {

@@ -87,10 +87,11 @@ export default function Autopilot() {
 
   const loadData = async () => {
     try {
-      const [autopilotRes, sessRes, listRes] = await Promise.all([
+      const [autopilotRes, sessRes, listRes, logsRes] = await Promise.all([
         api.get('/autopilot/config'),
         api.get('/sessions'),
         api.get('/contact-lists'),
+        api.get('/autopilot/logs?limit=100'),
       ]);
       const cfg = autopilotRes.data.config;
       if (!cfg.message_templates || cfg.message_templates.length === 0) {
@@ -100,6 +101,14 @@ export default function Autopilot() {
       setAssignments(autopilotRes.data.assignments);
       setSessions(sessRes.data);
       setLists(listRes.data);
+
+      // Load persisted logs (already sorted DESC from API)
+      const persistedLogs: LogEntry[] = logsRes.data.map((log: any) => ({
+        time: new Date(log.created_at).toLocaleTimeString(),
+        message: log.message,
+        type: log.type,
+      }));
+      setLogs(persistedLogs);
     } catch (err) {
       console.error(err);
     }

@@ -32,6 +32,36 @@ class AutopilotService {
     this.sessionManager = sm;
   }
 
+  /** Persist a log entry to the database and emit via socket */
+  private async persistLog(message: string, type: string = 'info'): Promise<void> {
+    try {
+      await pool.query(
+        'INSERT INTO autopilot_logs (message, type) VALUES ($1, $2)',
+        [message, type]
+      );
+    } catch (err) {
+      console.error('[Autopilot] Failed to persist log:', err);
+    }
+  }
+
+  /** Get recent logs from the database */
+  async getLogs(limit: number = 100): Promise<any[]> {
+    const { rows } = await pool.query(
+      'SELECT id, message, type, created_at FROM autopilot_logs ORDER BY created_at DESC LIMIT $1',
+      [limit]
+    );
+    return rows;
+  }
+
+  /** Clean up old logs (keep last 500) */
+  async cleanOldLogs(): Promise<void> {
+    await pool.query(
+      `DELETE FROM autopilot_logs WHERE id NOT IN (
+        SELECT id FROM autopilot_logs ORDER BY created_at DESC LIMIT 500
+      )`
+    );
+  }
+
   async getConfig(): Promise<AutopilotConfig> {
     const { rows } = await pool.query('SELECT * FROM autopilot_config LIMIT 1');
     if (rows.length > 0) {
@@ -115,6 +145,7 @@ class AutopilotService {
 
     const io = getIO();
     io.emit('autopilot:status', { status: 'running' });
+    await this.persistLog('Autopilot iniciado', 'success');
 
     console.log('[Autopilot] Started');
     this.runLoop().catch(err => {
@@ -138,6 +169,7 @@ class AutopilotService {
 
     const io = getIO();
     io.emit('autopilot:status', { status: 'stopped' });
+    await this.persistLog('Autopilot detenido', 'warning');
     console.log('[Autopilot] Stopped');
   }
 
@@ -165,7 +197,9 @@ class AutopilotService {
       if (assignments.length === 0) {
         console.log('[Autopilot] No assignments configured, waiting...');
         const io = getIO();
-        io.emit('autopilot:log', { message: 'Sin asignaciones configuradas. Esperando...' });
+        const msg = 'Sin asignaciones configuradas. Esperando...';
+        io.emit('autopilot:log', { message: msg });
+        await this.persistLog(msg, 'warning');
         await this.waitOrStop(30000);
         continue;
       }
@@ -173,17 +207,21 @@ class AutopilotService {
       if (config.message_templates.length === 0) {
         console.log('[Autopilot] No templates configured, waiting...');
         const io = getIO();
-        io.emit('autopilot:log', { message: 'Sin templates configurados. Esperando...' });
+        const msg = 'Sin templates configurados. Esperando...';
+        io.emit('autopilot:log', { message: msg });
+        await this.persistLog(msg, 'warning');
         await this.waitOrStop(30000);
         continue;
       }
 
       console.log(`[Autopilot] Starting cycle: ${assignments.length} phones, ${config.messages_per_cycle} msgs each, ${config.message_templates.length} templates`);
       const io = getIO();
+      const cycleStartMsg = `Ciclo iniciado: ${assignments.length} telefonos, ${config.messages_per_cycle} msgs c/u`;
       io.emit('autopilot:cycle_start', {
         phones: assignments.length,
         messagesPerCycle: config.messages_per_cycle,
       });
+      await this.persistLog(cycleStartMsg, 'info');
 
       await this.runCycle(config, assignments);
 
@@ -197,10 +235,12 @@ class AutopilotService {
         [nextCycleAt.toISOString(), config.id]
       );
 
+      const cycleEndMsg = `Ciclo completado. Proximo: ${nextCycleAt.toLocaleTimeString()}`;
       console.log(`[Autopilot] Cycle complete. Next cycle at ${nextCycleAt.toLocaleTimeString()}`);
       io.emit('autopilot:cycle_end', {
         nextCycleAt: nextCycleAt.toISOString(),
       });
+      await this.persistLog(cycleEndMsg, 'success');
 
       await this.waitOrStop(intervalMs);
     }
@@ -251,11 +291,10 @@ class AutopilotService {
         const sock = this.sessionManager.getSocket(assignment.session_id);
 
         if (!sock) {
+          const skipMsg = `${assignment.session_name} desconectado, saltando`;
           console.log(`[Autopilot] Session ${assignment.session_name} not connected, skipping`);
-          io.emit('autopilot:log', {
-            message: `${assignment.session_name} desconectado, saltando`,
-            type: 'warning',
-          });
+          io.emit('autopilot:log', { message: skipMsg, type: 'warning' });
+          await this.persistLog(skipMsg, 'warning');
           continue;
         }
 
@@ -291,6 +330,8 @@ class AutopilotService {
             totalFailed,
           });
 
+          const sentMsg = `[OK] ${assignment.session_name} -> ${contact.name || contact.phone} (msg #${msgIdx + 1})`;
+          await this.persistLog(sentMsg, 'success');
           console.log(`[Autopilot] ${assignment.session_name} -> ${contact.phone} [T${(phoneIdx % templates.length) + 1}] (${msgIdx + 1}/${config.messages_per_cycle}) OK`);
         } catch (err: any) {
           await pool.query(
@@ -311,6 +352,8 @@ class AutopilotService {
             totalFailed,
           });
 
+          const failMsg = `[FAIL] ${assignment.session_name} -> ${contact.name || contact.phone} (msg #${msgIdx + 1})`;
+          await this.persistLog(failMsg, 'error');
           console.log(`[Autopilot] ${assignment.session_name} -> ${contact.phone} FAILED: ${err.message}`);
         }
 
@@ -318,11 +361,11 @@ class AutopilotService {
       }
     }
 
+    const summaryMsg = `Ciclo completado: ${totalSent} enviados, ${totalFailed} fallidos`;
     console.log(`[Autopilot] Cycle finished: ${totalSent} sent, ${totalFailed} failed`);
-    io.emit('autopilot:log', {
-      message: `Ciclo completado: ${totalSent} enviados, ${totalFailed} fallidos`,
-      type: 'success',
-    });
+    io.emit('autopilot:log', { message: summaryMsg, type: 'success' });
+    await this.persistLog(summaryMsg, 'success');
+    await this.cleanOldLogs();
   }
 
   private waitOrStop(ms: number): Promise<void> {
