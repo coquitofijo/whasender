@@ -223,7 +223,7 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey={chartKey} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={chartFormatter} />
               <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
-              <Tooltip content={<DarkTooltip />} labelFormatter={chartFormatter} />
+              <Tooltip content={<DarkTooltip />} labelFormatter={(label: any) => chartFormatter(String(label))} />
               <Area type="monotone" dataKey="sent" name="Enviados" stroke="#10b981" fill="url(#sentGrad)" strokeWidth={2} />
               <Area type="monotone" dataKey="failed" name="Fallidos" stroke="#ef4444" fill="url(#failGrad)" strokeWidth={2} />
             </AreaChart>
