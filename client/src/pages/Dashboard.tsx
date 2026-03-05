@@ -48,6 +48,8 @@ export default function Dashboard() {
     </div>
   );
 
+  if (!stats) return null;
+
   const cards = [
     { label: 'Sesiones Conectadas', value: `${stats.sessions.connected} / ${stats.sessions.total}`, icon: Smartphone, color: 'text-emerald-400' },
     { label: 'Campanas Activas', value: stats.campaigns.running, icon: Send, color: 'text-blue-400' },
