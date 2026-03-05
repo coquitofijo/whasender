@@ -18,6 +18,7 @@ const logger = pino({ level: 'silent' });
 export class SessionManager {
   private sessions: Map<string, WASocket> = new Map();
   private connecting: Set<string> = new Set();
+  private authenticated: Set<string> = new Set(); // tracks sessions that reached 'open'
   private shuttingDown = false;
   private pool: Pool;
   private io: Server;
@@ -89,6 +90,7 @@ export class SessionManager {
         }
 
         if (connection === 'open') {
+          this.authenticated.add(sessionId);
           const phone = sock.user?.id.split(':')[0] || '';
           console.log(`[Session ${tag}] Connected! Phone: ${phone}`);
           await this.updateStatus(sessionId, 'connected', phone);
@@ -107,6 +109,7 @@ export class SessionManager {
           if (statusCode === DisconnectReason.loggedOut) {
             // Only clear auth when WhatsApp explicitly logs us out
             console.log(`[Session ${tag}] Logged out by WhatsApp, clearing auth`);
+            this.authenticated.delete(sessionId);
             await this.clearAuth(sessionId);
             await this.updateStatus(sessionId, 'logged_out');
             this.io.emit('session:status', { sessionId, status: 'logged_out' });
@@ -115,8 +118,8 @@ export class SessionManager {
             this.connecting.delete(sessionId);
             await this.connectSession(sessionId);
             return;
-          } else {
-            // Any other disconnect: keep auth, mark disconnected, try to reconnect
+          } else if (this.authenticated.has(sessionId)) {
+            // Was previously connected: keep auth, mark disconnected, try to reconnect
             console.log(`[Session ${tag}] Disconnected, will retry in 5s`);
             await this.updateStatus(sessionId, 'disconnected');
             this.io.emit('session:status', { sessionId, status: 'disconnected' });
@@ -125,6 +128,11 @@ export class SessionManager {
               this.connecting.delete(sessionId);
               this.connectSession(sessionId).catch(console.error);
             }, 5000);
+          } else {
+            // Never authenticated (QR expired or scan failed) — don't auto-reconnect
+            console.log(`[Session ${tag}] QR expired or connection failed before auth, not retrying`);
+            await this.updateStatus(sessionId, 'disconnected');
+            this.io.emit('session:status', { sessionId, status: 'disconnected' });
           }
         }
       });
@@ -180,6 +188,7 @@ export class SessionManager {
     for (const row of rows) {
       try {
         console.log(`[SessionManager] Restoring "${row.name}" (${row.id.slice(0, 8)})`);
+        this.authenticated.add(row.id); // was connected before, allow auto-reconnect
         await this.connectSession(row.id);
       } catch (err) {
         console.error(`[SessionManager] Failed to restore session ${row.id}:`, err);
