@@ -57,7 +57,8 @@ export default function Autopilot() {
     const onLog = (data: { message: string; type?: string }) => addLog(data.message, data.type);
     const onAssignmentRemoved = (data: { sessionId: string; reason: string }) => {
       setAssignments(prev => prev.filter(a => a.session_id !== data.sessionId));
-      const reasonText = data.reason === 'banned' ? 'baneado' : 'deslogueado';
+      const reasonText = data.reason === 'banned' ? 'baneado' :
+        data.reason === 'restricted' ? 'restringido' : 'deslogueado';
       addLog(`Sesion removida del autopilot (${reasonText})`, 'warning');
     };
 
@@ -313,25 +314,42 @@ export default function Autopilot() {
           )}
 
           <div className="space-y-2 max-h-64 overflow-auto">
-            {assignments.map((a, idx) => (
-              <div key={a.session_id} className="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                  <div>
-                    <p className="text-sm text-white font-medium">{a.session_name}</p>
-                    <p className="text-xs text-slate-400">→ {a.list_name}</p>
+            {assignments.map((a, idx) => {
+              const session = sessions.find(s => s.id === a.session_id);
+              const isOk = session?.status === 'connected';
+              const statusLabel = !session ? 'eliminada' :
+                session.status === 'banned' ? 'baneado' :
+                session.status === 'restricted' ? 'restringido' :
+                session.status === 'logged_out' ? 'deslogueado' :
+                session.status === 'disconnected' ? 'desconectado' :
+                null;
+              return (
+                <div key={a.session_id} className={`flex items-center justify-between rounded-lg px-4 py-3 ${
+                  !isOk ? 'bg-red-500/5 border border-red-500/20' : 'bg-slate-800/50'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-2 h-2 rounded-full ${isOk ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'}`} />
+                    <div>
+                      <p className="text-sm text-white font-medium">{a.session_name}</p>
+                      <p className="text-xs text-slate-400">→ {a.list_name}</p>
+                    </div>
+                    <span className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded">
+                      T{(idx % templates.length) + 1}
+                    </span>
+                    {statusLabel && (
+                      <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded">
+                        {statusLabel}
+                      </span>
+                    )}
                   </div>
-                  <span className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded">
-                    T{(idx % templates.length) + 1}
-                  </span>
+                  {!isRunning && (
+                    <button onClick={() => removeAssignment(a.session_id)} className="text-red-400/60 hover:text-red-400 p-1">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
-                {!isRunning && (
-                  <button onClick={() => removeAssignment(a.session_id)} className="text-red-400/60 hover:text-red-400 p-1">
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
             {assignments.length === 0 && (
               <p className="text-slate-500 text-center py-6 text-sm">Sin asignaciones.</p>
             )}

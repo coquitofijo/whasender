@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { autopilotService } from '../services/autopilotService';
+import pool from '../db/pool';
 
 const router = Router();
 
@@ -42,6 +43,14 @@ router.post('/assignments', async (req: Request, res: Response) => {
     if (!session_id || !list_id) {
       return res.status(400).json({ error: 'session_id and list_id are required' });
     }
+
+    // Validate session is connected
+    const { rows } = await pool.query('SELECT status FROM sessions WHERE id = $1', [session_id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Sesion no encontrada' });
+    if (rows[0].status !== 'connected') {
+      return res.status(400).json({ error: `No se puede asignar una sesion con estado "${rows[0].status}". Solo sesiones conectadas.` });
+    }
+
     await autopilotService.setAssignment(session_id, list_id);
     const assignments = await autopilotService.getAssignments();
     res.json(assignments);
