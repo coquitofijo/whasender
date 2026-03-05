@@ -67,6 +67,27 @@ export function createSessionRoutes(sessionManager: SessionManager): Router {
     }
   });
 
+  // Unrestrict a session (remove restriction flag, reconnect)
+  router.post('/:id/unrestrict', async (req: Request<IdParams>, res: Response) => {
+    try {
+      const session = await sessionService.getSessionById(req.params.id);
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+      if (session.status !== 'restricted') return res.status(400).json({ error: 'Session is not restricted' });
+
+      // Set back to connected if socket exists, otherwise reconnect
+      if (sessionManager.isConnected(req.params.id)) {
+        await sessionService.updateStatus(req.params.id, 'connected');
+        res.json({ message: 'Session unrestricted and active' });
+      } else {
+        await sessionService.updateStatus(req.params.id, 'disconnected');
+        sessionManager.connectSession(req.params.id).catch(console.error);
+        res.json({ message: 'Session unrestricted, reconnecting...' });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   router.delete('/:id', async (req: Request<IdParams>, res: Response) => {
     try {
       await sessionManager.disconnectSession(req.params.id);

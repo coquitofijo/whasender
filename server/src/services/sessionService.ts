@@ -58,6 +58,10 @@ export async function updateProxy(id: string, proxyUrl: string | null) {
   return rows[0];
 }
 
+export async function updateStatus(id: string, status: string) {
+  await pool.query('UPDATE sessions SET status = $1, updated_at = NOW() WHERE id = $2', [status, id]);
+}
+
 export async function deleteSession(id: string) {
   await pool.query('DELETE FROM sessions WHERE id = $1', [id]);
 }

@@ -227,7 +227,7 @@ export class SessionManager {
     const { rows } = await this.pool.query(
       `SELECT s.id, s.name, s.status FROM sessions s
        INNER JOIN session_auth_creds sac ON sac.session_id = s.id
-       WHERE s.status != 'logged_out'`
+       WHERE s.status NOT IN ('logged_out', 'banned', 'restricted')`
     );
 
     if (rows.length === 0) {

@@ -23,6 +23,9 @@ interface Assignment {
   list_name: string;
 }
 
+// Number of consecutive failures before flagging a session as restricted
+const CONSECUTIVE_FAIL_THRESHOLD = 5;
+
 class AutopilotService {
   private sessionManager!: SessionManager;
   private running = false;
@@ -247,12 +250,55 @@ class AutopilotService {
   }
 
   /**
+   * Flag a session as restricted: update DB, remove from autopilot, notify frontend.
+   */
+  private async flagRestricted(sessionId: string, sessionName: string, consecutiveFails: number): Promise<void> {
+    const io = getIO();
+
+    // Get phone
+    const { rows: sInfo } = await pool.query('SELECT phone FROM sessions WHERE id = $1', [sessionId]);
+    const phone = sInfo[0]?.phone || null;
+
+    // 1. Update session status
+    await pool.query(
+      "UPDATE sessions SET status = 'restricted', updated_at = NOW() WHERE id = $1",
+      [sessionId]
+    );
+
+    // 2. Save alert (reuse ban_alerts table with reason='restricted')
+    const { rows: alertRows } = await pool.query(
+      `INSERT INTO ban_alerts (session_id, session_name, phone, reason, status_code)
+       VALUES ($1, $2, $3, 'restricted', 0) RETURNING *`,
+      [sessionId, sessionName, phone]
+    );
+
+    // 3. Remove from autopilot
+    await pool.query('DELETE FROM autopilot_assignments WHERE session_id = $1', [sessionId]);
+
+    // 4. Notify frontend
+    io.emit('session:status', { sessionId, status: 'restricted' });
+    io.emit('session:banned', alertRows[0]); // reuse ban alert component
+    io.emit('autopilot:assignment_removed', { sessionId, reason: 'restricted' });
+
+    const msg = `⚠️ ${sessionName} marcado como RESTRINGIDO (${consecutiveFails} fallos consecutivos). Removido del autopilot.`;
+    io.emit('autopilot:log', { message: msg, type: 'error' });
+    await this.persistLog(msg, 'error');
+
+    console.log(`[Autopilot] Session "${sessionName}" flagged as restricted after ${consecutiveFails} consecutive failures`);
+  }
+
+  /**
    * Run a single cycle with round-robin sending.
    * Each phone gets a different template: phone[i] uses templates[i % templates.length]
+   * Detects restrictions: if a session fails X messages in a row, flags it as restricted.
    */
   private async runCycle(config: AutopilotConfig, assignments: Assignment[]): Promise<void> {
     const io = getIO();
     const templates = config.message_templates;
+
+    // Track consecutive failures per session for restriction detection
+    const consecutiveFailures: Map<string, number> = new Map();
+    const restrictedInCycle: Set<string> = new Set();
 
     // Pre-fetch contacts for each assignment
     const contactQueues: Map<string, any[]> = new Map();
@@ -270,6 +316,7 @@ class AutopilotService {
         [a.list_id, config.messages_per_cycle]
       );
       contactQueues.set(a.session_id, rows);
+      consecutiveFailures.set(a.session_id, 0);
 
       if (rows.length === 0) {
         console.log(`[Autopilot] No more contacts for ${a.session_name} in ${a.list_name}`);
@@ -284,6 +331,10 @@ class AutopilotService {
         if (!this.running) return;
 
         const assignment = assignments[phoneIdx];
+
+        // Skip sessions already flagged as restricted during this cycle
+        if (restrictedInCycle.has(assignment.session_id)) continue;
+
         const queue = contactQueues.get(assignment.session_id);
         if (!queue || msgIdx >= queue.length) continue;
 
@@ -319,6 +370,9 @@ class AutopilotService {
           );
 
           totalSent++;
+          // Reset consecutive failures on success
+          consecutiveFailures.set(assignment.session_id, 0);
+
           io.emit('autopilot:message_sent', {
             sessionName: assignment.session_name,
             contactPhone: contact.phone,
@@ -341,6 +395,9 @@ class AutopilotService {
           );
 
           totalFailed++;
+          const fails = (consecutiveFailures.get(assignment.session_id) || 0) + 1;
+          consecutiveFailures.set(assignment.session_id, fails);
+
           io.emit('autopilot:message_sent', {
             sessionName: assignment.session_name,
             contactPhone: contact.phone,
@@ -352,17 +409,24 @@ class AutopilotService {
             totalFailed,
           });
 
-          const failMsg = `[FAIL] ${assignment.session_name} -> ${contact.name || contact.phone} (msg #${msgIdx + 1})`;
+          const failMsg = `[FAIL] ${assignment.session_name} -> ${contact.name || contact.phone} (msg #${msgIdx + 1}) — fallo ${fails}/${CONSECUTIVE_FAIL_THRESHOLD}`;
           await this.persistLog(failMsg, 'error');
-          console.log(`[Autopilot] ${assignment.session_name} -> ${contact.phone} FAILED: ${err.message}`);
+          console.log(`[Autopilot] ${assignment.session_name} -> ${contact.phone} FAILED (${fails}/${CONSECUTIVE_FAIL_THRESHOLD}): ${err.message}`);
+
+          // Check if threshold reached — flag as restricted
+          if (fails >= CONSECUTIVE_FAIL_THRESHOLD) {
+            restrictedInCycle.add(assignment.session_id);
+            await this.flagRestricted(assignment.session_id, assignment.session_name, fails);
+          }
         }
 
         await sleep(config.delay_between_ms);
       }
     }
 
-    const summaryMsg = `Ciclo completado: ${totalSent} enviados, ${totalFailed} fallidos`;
-    console.log(`[Autopilot] Cycle finished: ${totalSent} sent, ${totalFailed} failed`);
+    const summaryMsg = `Ciclo completado: ${totalSent} enviados, ${totalFailed} fallidos` +
+      (restrictedInCycle.size > 0 ? `, ${restrictedInCycle.size} restringido(s)` : '');
+    console.log(`[Autopilot] Cycle finished: ${totalSent} sent, ${totalFailed} failed, ${restrictedInCycle.size} restricted`);
     io.emit('autopilot:log', { message: summaryMsg, type: 'success' });
     await this.persistLog(summaryMsg, 'success');
     await this.cleanOldLogs();

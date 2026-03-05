@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import api from '../api/client';
 import { useSocket } from '../context/SocketContext';
 import type { Session } from '../types';
-import { Plus, Wifi, WifiOff, QrCode, Trash2, X, Shield } from 'lucide-react';
+import { Plus, Wifi, WifiOff, QrCode, Trash2, X, Shield, AlertTriangle, RotateCcw } from 'lucide-react';
 
 export default function Sessions() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -97,22 +97,38 @@ export default function Sessions() {
     disconnected: { label: 'Desconectado', color: 'bg-slate-500/20 text-slate-400', dot: 'bg-slate-400' },
     logged_out: { label: 'Deslogueado', color: 'bg-orange-500/20 text-orange-400', dot: 'bg-orange-400' },
     banned: { label: 'Baneado', color: 'bg-red-500/20 text-red-400', dot: 'bg-red-400' },
+    restricted: { label: 'Restringido', color: 'bg-amber-500/20 text-amber-400', dot: 'bg-amber-400 animate-pulse' },
   };
 
   // Group sessions by status category
   const connected = sessions.filter(s => s.status === 'connected');
   const inProgress = sessions.filter(s => s.status === 'connecting' || s.status === 'qr_ready');
   const loggedOut = sessions.filter(s => s.status === 'logged_out' || s.status === 'disconnected');
+  const restricted = sessions.filter(s => s.status === 'restricted');
   const banned = sessions.filter(s => s.status === 'banned');
+
+  const unrestrict = async (id: string) => {
+    try {
+      await api.post(`/sessions/${id}/unrestrict`);
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, status: 'connected' } : s));
+    } catch (err) { console.error(err); }
+  };
 
   const renderSession = (session: Session) => {
     const cfg = statusConfig[session.status] || statusConfig.disconnected;
     return (
       <div key={session.id} className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-between hover:border-slate-600 transition-colors">
         <div className="flex items-center gap-4">
-          <div className={`p-2 rounded-lg ${session.status === 'connected' ? 'bg-emerald-500/10' : session.status === 'banned' ? 'bg-red-500/10' : 'bg-slate-800'}`}>
+          <div className={`p-2 rounded-lg ${
+            session.status === 'connected' ? 'bg-emerald-500/10' :
+            session.status === 'banned' ? 'bg-red-500/10' :
+            session.status === 'restricted' ? 'bg-amber-500/10' :
+            'bg-slate-800'
+          }`}>
             {session.status === 'connected' ? (
               <Wifi size={20} className="text-emerald-400" />
+            ) : session.status === 'restricted' ? (
+              <AlertTriangle size={20} className="text-amber-400" />
             ) : (
               <WifiOff size={20} className={session.status === 'banned' ? 'text-red-400' : 'text-slate-500'} />
             )}
@@ -142,6 +158,11 @@ export default function Sessions() {
           {session.status === 'connected' && (
             <button onClick={() => disconnect(session.id)} className="bg-slate-700 text-slate-300 hover:bg-slate-600 px-3 py-1.5 rounded-lg text-sm">
               Desconectar
+            </button>
+          )}
+          {session.status === 'restricted' && (
+            <button onClick={() => unrestrict(session.id)} className="flex items-center gap-1 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg text-sm">
+              <RotateCcw size={14} /> Reactivar
             </button>
           )}
           <button onClick={() => remove(session.id)} className="text-red-400/60 hover:text-red-400 p-1.5">
@@ -274,6 +295,20 @@ export default function Sessions() {
               color="text-orange-400"
             />
             <div className="grid gap-2">{loggedOut.map(renderSession)}</div>
+          </div>
+        )}
+
+        {/* Restringidas */}
+        {restricted.length > 0 && (
+          <div className="bg-slate-900 border border-amber-500/30 rounded-xl p-5">
+            <SectionHeader
+              icon={<AlertTriangle size={16} className="text-amber-400" />}
+              title="Restringidas"
+              count={restricted.length}
+              color="text-amber-400"
+            />
+            <p className="text-xs text-amber-400/60 mb-3">Detectamos muchos fallos consecutivos. Revisá el numero y reactivalo si está OK.</p>
+            <div className="grid gap-2">{restricted.map(renderSession)}</div>
           </div>
         )}
 

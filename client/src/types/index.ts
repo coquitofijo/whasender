@@ -3,7 +3,7 @@ export interface Session {
   name: string;
   phone: string | null;
   proxy_url: string | null;
-  status: 'disconnected' | 'connecting' | 'qr_ready' | 'connected' | 'logged_out' | 'banned';
+  status: 'disconnected' | 'connecting' | 'qr_ready' | 'connected' | 'logged_out' | 'banned' | 'restricted';
   created_at: string;
   updated_at: string;
 }
@@ -113,7 +113,7 @@ export interface BanAlert {
   session_id: string;
   session_name: string;
   phone: string | null;
-  reason: 'banned' | 'temp_banned';
+  reason: 'banned' | 'temp_banned' | 'restricted';
   status_code: number;
   dismissed: boolean;
   created_at: string;
