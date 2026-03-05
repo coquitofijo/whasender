@@ -274,9 +274,9 @@ class AutopilotService {
           const result = await sock.sendMessage(jid, { text: message });
 
           await pool.query(
-            `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, wa_message_id)
-             VALUES (NULL, $1, $2, 'sent', $3)`,
-            [contact.id, contact.phone, result?.key?.id || null]
+            `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, wa_message_id, session_id)
+             VALUES (NULL, $1, $2, 'sent', $3, $4)`,
+            [contact.id, contact.phone, result?.key?.id || null, assignment.session_id]
           );
 
           totalSent++;
@@ -294,9 +294,9 @@ class AutopilotService {
           console.log(`[Autopilot] ${assignment.session_name} -> ${contact.phone} [T${(phoneIdx % templates.length) + 1}] (${msgIdx + 1}/${config.messages_per_cycle}) OK`);
         } catch (err: any) {
           await pool.query(
-            `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, error_message)
-             VALUES (NULL, $1, $2, 'failed', $3)`,
-            [contact.id, contact.phone, err.message]
+            `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, error_message, session_id)
+             VALUES (NULL, $1, $2, 'failed', $3, $4)`,
+            [contact.id, contact.phone, err.message, assignment.session_id]
           );
 
           totalFailed++;

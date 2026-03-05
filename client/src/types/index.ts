@@ -56,9 +56,38 @@ export interface MessageLog {
 }
 
 export interface DashboardStats {
-  sessions: { total: string; connected: string };
-  campaigns: { total: string; running: string; completed: string };
+  sessions: { total: string; connected: string; disconnected: string; pending: string };
+  campaigns: { total: string; running: string; completed: string; pending: string };
   messagesToday: { total: string; sent: string; failed: string };
+  messagesPerSession: SessionMetric[];
+  banHistory: BanHistoryEntry[];
+  contactCoverage: { reached: number; total: number };
+  autopilot: { status: string; last_cycle_at: string | null; next_cycle_at: string | null; messages_per_cycle: number } | null;
+}
+
+export interface SessionMetric {
+  session_id: string;
+  session_name: string;
+  phone: string | null;
+  session_status: string;
+  sent: number;
+  failed: number;
+  total: number;
+}
+
+export interface BanHistoryEntry {
+  id: string;
+  session_name: string;
+  phone: string | null;
+  reason: string;
+  status_code: number;
+  dismissed: boolean;
+  created_at: string;
+}
+
+export interface DashboardActivity {
+  daily: Array<{ date: string; sent: number; failed: number }>;
+  hourly: Array<{ hour: string; sent: number; failed: number }>;
 }
 
 export interface AutopilotConfig {

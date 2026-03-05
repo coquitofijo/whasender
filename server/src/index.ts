@@ -83,17 +83,82 @@ app.post('/api/ban-alerts/:id/dismiss', async (req, res) => {
   }
 });
 
-// Dashboard stats
+// Dashboard stats (enhanced)
 app.get('/api/dashboard/stats', async (_req, res) => {
   try {
-    const sessions = await pool.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = \'connected\') as connected FROM sessions');
-    const campaigns = await pool.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = \'running\') as running, COUNT(*) FILTER (WHERE status = \'completed\') as completed FROM campaigns');
-    const messages = await pool.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = \'sent\') as sent, COUNT(*) FILTER (WHERE status = \'failed\') as failed FROM message_logs WHERE sent_at >= NOW() - INTERVAL \'24 hours\'');
+    const [sessions, campaigns, messages, perSession, bans, coverage, autopilot] = await Promise.all([
+      pool.query(`SELECT COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'connected') as connected,
+        COUNT(*) FILTER (WHERE status = 'disconnected') as disconnected,
+        COUNT(*) FILTER (WHERE status IN ('connecting', 'qr_ready')) as pending
+        FROM sessions`),
+      pool.query(`SELECT COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'running') as running,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed,
+        COUNT(*) FILTER (WHERE status IN ('draft', 'paused')) as pending
+        FROM campaigns`),
+      pool.query(`SELECT COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'sent') as sent,
+        COUNT(*) FILTER (WHERE status = 'failed') as failed
+        FROM message_logs WHERE sent_at >= NOW() - INTERVAL '24 hours'`),
+      pool.query(`SELECT s.id as session_id, s.name as session_name, s.phone, s.status as session_status,
+        COUNT(ml.id) FILTER (WHERE ml.status = 'sent') as sent,
+        COUNT(ml.id) FILTER (WHERE ml.status = 'failed') as failed,
+        COUNT(ml.id) as total
+        FROM sessions s
+        LEFT JOIN message_logs ml ON ml.session_id = s.id AND ml.sent_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY s.id, s.name, s.phone, s.status
+        ORDER BY COUNT(ml.id) DESC`),
+      pool.query(`SELECT id, session_name, phone, reason, status_code, dismissed, created_at
+        FROM ban_alerts ORDER BY created_at DESC LIMIT 10`),
+      pool.query(`SELECT
+        (SELECT COUNT(DISTINCT contact_id) FROM message_logs WHERE status = 'sent') as reached,
+        (SELECT COUNT(*) FROM contacts) as total`),
+      pool.query(`SELECT status, last_cycle_at, next_cycle_at, messages_per_cycle
+        FROM autopilot_config LIMIT 1`),
+    ]);
 
     res.json({
       sessions: sessions.rows[0],
       campaigns: campaigns.rows[0],
       messagesToday: messages.rows[0],
+      messagesPerSession: perSession.rows.map((r: any) => ({
+        ...r,
+        sent: parseInt(r.sent) || 0,
+        failed: parseInt(r.failed) || 0,
+        total: parseInt(r.total) || 0,
+      })),
+      banHistory: bans.rows,
+      contactCoverage: {
+        reached: parseInt(coverage.rows[0].reached) || 0,
+        total: parseInt(coverage.rows[0].total) || 0,
+      },
+      autopilot: autopilot.rows[0] || null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Dashboard activity (chart data — polled less frequently)
+app.get('/api/dashboard/activity', async (_req, res) => {
+  try {
+    const [daily, hourly] = await Promise.all([
+      pool.query(`SELECT DATE(sent_at) as date,
+        COUNT(*) FILTER (WHERE status = 'sent') as sent,
+        COUNT(*) FILTER (WHERE status = 'failed') as failed
+        FROM message_logs WHERE sent_at >= NOW() - INTERVAL '7 days'
+        GROUP BY DATE(sent_at) ORDER BY date ASC`),
+      pool.query(`SELECT DATE_TRUNC('hour', sent_at) as hour,
+        COUNT(*) FILTER (WHERE status = 'sent') as sent,
+        COUNT(*) FILTER (WHERE status = 'failed') as failed
+        FROM message_logs WHERE sent_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY DATE_TRUNC('hour', sent_at) ORDER BY hour ASC`),
+    ]);
+
+    res.json({
+      daily: daily.rows.map((r: any) => ({ date: r.date, sent: parseInt(r.sent) || 0, failed: parseInt(r.failed) || 0 })),
+      hourly: hourly.rows.map((r: any) => ({ hour: r.hour, sent: parseInt(r.sent) || 0, failed: parseInt(r.failed) || 0 })),
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

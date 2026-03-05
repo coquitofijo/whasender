@@ -84,9 +84,9 @@ class SenderService {
         const result = await sock.sendMessage(jid, { text: message });
 
         await pool.query(
-          `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, wa_message_id)
-           VALUES ($1, $2, $3, 'sent', $4)`,
-          [campaignId, contact.id, contact.phone, result?.key?.id || null]
+          `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, wa_message_id, session_id)
+           VALUES ($1, $2, $3, 'sent', $4, $5)`,
+          [campaignId, contact.id, contact.phone, result?.key?.id || null, campaign.session_id]
         );
 
         sentCount++;
@@ -112,9 +112,9 @@ class SenderService {
         });
       } catch (err: any) {
         await pool.query(
-          `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, error_message)
-           VALUES ($1, $2, $3, 'failed', $4)`,
-          [campaignId, contact.id, contact.phone, err.message]
+          `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, error_message, session_id)
+           VALUES ($1, $2, $3, 'failed', $4, $5)`,
+          [campaignId, contact.id, contact.phone, err.message, campaign.session_id]
         );
 
         failedCount++;
