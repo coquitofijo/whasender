@@ -55,18 +55,25 @@ export default function Autopilot() {
       );
     };
     const onLog = (data: { message: string; type?: string }) => addLog(data.message, data.type);
+    const onAssignmentRemoved = (data: { sessionId: string; reason: string }) => {
+      setAssignments(prev => prev.filter(a => a.session_id !== data.sessionId));
+      const reasonText = data.reason === 'banned' ? 'baneado' : 'deslogueado';
+      addLog(`Sesion removida del autopilot (${reasonText})`, 'warning');
+    };
 
     socket.on('autopilot:status', onStatus);
     socket.on('autopilot:cycle_start', onCycleStart);
     socket.on('autopilot:cycle_end', onCycleEnd);
     socket.on('autopilot:message_sent', onMessageSent);
     socket.on('autopilot:log', onLog);
+    socket.on('autopilot:assignment_removed', onAssignmentRemoved);
     return () => {
       socket.off('autopilot:status', onStatus);
       socket.off('autopilot:cycle_start', onCycleStart);
       socket.off('autopilot:cycle_end', onCycleEnd);
       socket.off('autopilot:message_sent', onMessageSent);
       socket.off('autopilot:log', onLog);
+      socket.off('autopilot:assignment_removed', onAssignmentRemoved);
     };
   }, [socket]);
 

@@ -121,36 +121,34 @@ export class SessionManager {
             const sName = sessionInfo[0]?.name || 'Unknown';
             const sPhone = sessionInfo[0]?.phone || null;
 
-            // 1. Persist ban alert
-            await this.pool.query(
+            // 1. Persist ban alert and get real ID
+            const { rows: banRows } = await this.pool.query(
               `INSERT INTO ban_alerts (session_id, session_name, phone, reason, status_code)
-               VALUES ($1, $2, $3, $4, $5)`,
+               VALUES ($1, $2, $3, $4, $5) RETURNING *`,
               [sessionId, sName, sPhone, reason, statusCode]
             );
 
             // 2. Remove from autopilot assignments (without stopping autopilot)
-            await this.pool.query(
+            const { rowCount: removedAssignments } = await this.pool.query(
               'DELETE FROM autopilot_assignments WHERE session_id = $1', [sessionId]
             );
 
-            // 3. Clear auth and remove session entirely
+            // 3. Update session status to banned (keep the row for history)
             this.authenticated.delete(sessionId);
             await this.clearAuth(sessionId);
-            await this.pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
+            await this.pool.query(
+              "UPDATE sessions SET status = 'banned', updated_at = NOW() WHERE id = $1",
+              [sessionId]
+            );
 
             // 4. Notify frontend
-            const banAlert = {
-              id: Date.now().toString(),
-              session_name: sName,
-              phone: sPhone,
-              reason,
-              status_code: statusCode,
-              created_at: new Date().toISOString(),
-            };
-            this.io.emit('session:banned', banAlert);
+            this.io.emit('session:banned', banRows[0]);
             this.io.emit('session:status', { sessionId, status: 'banned' });
+            if (removedAssignments && removedAssignments > 0) {
+              this.io.emit('autopilot:assignment_removed', { sessionId, reason: 'banned' });
+            }
 
-            console.log(`[Session ${tag}] ⚠️ Session "${sName}" (${sPhone}) removed. Ban alert saved.`);
+            console.log(`[Session ${tag}] ⚠️ Session "${sName}" (${sPhone}) banned. Alert saved.`);
           } else if (statusCode === DisconnectReason.loggedOut) {
             // Only clear auth when WhatsApp explicitly logs us out
             console.log(`[Session ${tag}] Logged out by WhatsApp, clearing auth`);
@@ -158,6 +156,15 @@ export class SessionManager {
             await this.clearAuth(sessionId);
             await this.updateStatus(sessionId, 'logged_out');
             this.io.emit('session:status', { sessionId, status: 'logged_out' });
+
+            // Also remove from autopilot assignments
+            const { rowCount: removedAssignments } = await this.pool.query(
+              'DELETE FROM autopilot_assignments WHERE session_id = $1', [sessionId]
+            );
+            if (removedAssignments && removedAssignments > 0) {
+              console.log(`[Session ${tag}] Removed from autopilot assignments (logged out)`);
+              this.io.emit('autopilot:assignment_removed', { sessionId, reason: 'logged_out' });
+            }
           } else if (statusCode === DisconnectReason.restartRequired) {
             console.log(`[Session ${tag}] Restart required, reconnecting immediately`);
             this.connecting.delete(sessionId);

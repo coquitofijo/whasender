@@ -40,11 +40,24 @@ export default function Sessions() {
       }
     };
 
+    // When a session is banned, update its status in the list immediately
+    const handleBanned = (data: { session_id: string }) => {
+      setSessions(prev =>
+        prev.map(s =>
+          s.id === data.session_id
+            ? { ...s, status: 'banned' as Session['status'] }
+            : s
+        )
+      );
+    };
+
     socket.on('session:qr', handleQR);
     socket.on('session:status', handleStatus);
+    socket.on('session:banned', handleBanned);
     return () => {
       socket.off('session:qr', handleQR);
       socket.off('session:status', handleStatus);
+      socket.off('session:banned', handleBanned);
     };
   }, [socket]);
 
