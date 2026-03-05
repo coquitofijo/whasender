@@ -15,6 +15,9 @@ import { usePostgresAuthState } from './usePostgresAuthState';
 
 const logger = pino({ level: 'silent' });
 
+// Status codes that indicate a ban (403 = banned, 405 = temp banned for spam)
+const BAN_STATUS_CODES = [403, 405];
+
 export class SessionManager {
   private sessions: Map<string, WASocket> = new Map();
   private connecting: Set<string> = new Set();
@@ -106,7 +109,49 @@ export class SessionManager {
           const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
           console.log(`[Session ${tag}] Connection closed, code: ${statusCode}`);
 
-          if (statusCode === DisconnectReason.loggedOut) {
+          if (BAN_STATUS_CODES.includes(statusCode)) {
+            // BANNED — log alert, remove from autopilot, clean up session
+            const reason = statusCode === 403 ? 'banned' : 'temp_banned';
+            console.log(`[Session ${tag}] ⚠️ BANNED (code ${statusCode}), cleaning up...`);
+
+            // Get session info before deleting
+            const { rows: sessionInfo } = await this.pool.query(
+              'SELECT name, phone FROM sessions WHERE id = $1', [sessionId]
+            );
+            const sName = sessionInfo[0]?.name || 'Unknown';
+            const sPhone = sessionInfo[0]?.phone || null;
+
+            // 1. Persist ban alert
+            await this.pool.query(
+              `INSERT INTO ban_alerts (session_id, session_name, phone, reason, status_code)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [sessionId, sName, sPhone, reason, statusCode]
+            );
+
+            // 2. Remove from autopilot assignments (without stopping autopilot)
+            await this.pool.query(
+              'DELETE FROM autopilot_assignments WHERE session_id = $1', [sessionId]
+            );
+
+            // 3. Clear auth and remove session entirely
+            this.authenticated.delete(sessionId);
+            await this.clearAuth(sessionId);
+            await this.pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
+
+            // 4. Notify frontend
+            const banAlert = {
+              id: Date.now().toString(),
+              session_name: sName,
+              phone: sPhone,
+              reason,
+              status_code: statusCode,
+              created_at: new Date().toISOString(),
+            };
+            this.io.emit('session:banned', banAlert);
+            this.io.emit('session:status', { sessionId, status: 'banned' });
+
+            console.log(`[Session ${tag}] ⚠️ Session "${sName}" (${sPhone}) removed. Ban alert saved.`);
+          } else if (statusCode === DisconnectReason.loggedOut) {
             // Only clear auth when WhatsApp explicitly logs us out
             console.log(`[Session ${tag}] Logged out by WhatsApp, clearing auth`);
             this.authenticated.delete(sessionId);

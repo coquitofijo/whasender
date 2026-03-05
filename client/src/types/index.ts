@@ -3,7 +3,7 @@ export interface Session {
   name: string;
   phone: string | null;
   proxy_url: string | null;
-  status: 'disconnected' | 'connecting' | 'qr_ready' | 'connected' | 'logged_out';
+  status: 'disconnected' | 'connecting' | 'qr_ready' | 'connected' | 'logged_out' | 'banned';
   created_at: string;
   updated_at: string;
 }
@@ -77,4 +77,15 @@ export interface AutopilotAssignment {
   list_id: string;
   session_name: string;
   list_name: string;
+}
+
+export interface BanAlert {
+  id: string;
+  session_id: string;
+  session_name: string;
+  phone: string | null;
+  reason: 'banned' | 'temp_banned';
+  status_code: number;
+  dismissed: boolean;
+  created_at: string;
 }

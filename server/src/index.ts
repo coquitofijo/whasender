@@ -62,6 +62,27 @@ app.use('/api/contact-lists', contactListRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/autopilot', autopilotRoutes);
 
+// Ban alerts
+app.get('/api/ban-alerts', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM ban_alerts WHERE dismissed = false ORDER BY created_at DESC'
+    );
+    res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/ban-alerts/:id/dismiss', async (req, res) => {
+  try {
+    await pool.query('UPDATE ban_alerts SET dismissed = true WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Dashboard stats
 app.get('/api/dashboard/stats', async (_req, res) => {
   try {

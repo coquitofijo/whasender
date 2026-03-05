@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { LayoutDashboard, Smartphone, Users, Send, Bot } from 'lucide-react';
+import BanAlerts from './BanAlerts';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -41,6 +42,7 @@ export default function Layout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto p-8">
+        <BanAlerts />
         <Outlet />
       </main>
     </div>
