@@ -5,16 +5,48 @@ import { Smartphone, Send, MessageSquare, CheckCircle } from 'lucide-react';
 
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  const fetchStats = () => {
+    setLoading(true);
+    setError(null);
+    api.get('/dashboard/stats')
+      .then(r => { setStats(r.data); setError(null); })
+      .catch(() => setError('No se pudo conectar al servidor'))
+      .finally(() => { setLoading(false); setRetrying(false); });
+  };
 
   useEffect(() => {
-    api.get('/dashboard/stats').then(r => setStats(r.data)).catch(console.error);
+    fetchStats();
     const interval = setInterval(() => {
-      api.get('/dashboard/stats').then(r => setStats(r.data)).catch(console.error);
+      api.get('/dashboard/stats').then(r => { setStats(r.data); setError(null); }).catch(() => {});
     }, 5000);
     return () => clearInterval(interval);
   }, []);
 
-  if (!stats) return <div className="text-slate-400">Cargando...</div>;
+  if (loading && !stats) return (
+    <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+      <div className="animate-spin w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full mb-4" />
+      <p>Conectando con el servidor...</p>
+      <p className="text-xs text-slate-500 mt-2">El servidor gratuito puede tardar ~30s en despertar</p>
+    </div>
+  );
+
+  if (error && !stats) return (
+    <div className="flex flex-col items-center justify-center h-64">
+      <p className="text-red-400 mb-4">{error}</p>
+      <button
+        onClick={() => { setRetrying(true); fetchStats(); }}
+        disabled={retrying}
+        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg transition"
+      >
+        {retrying ? 'Reintentando...' : 'Reintentar'}
+      </button>
+      <p className="text-xs text-slate-500 mt-3">El servidor gratuito (Render) se duerme tras 15 min de inactividad</p>
+    </div>
+  );
 
   const cards = [
     { label: 'Sesiones Conectadas', value: `${stats.sessions.connected} / ${stats.sessions.total}`, icon: Smartphone, color: 'text-emerald-400' },
