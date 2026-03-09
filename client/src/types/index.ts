@@ -96,6 +96,12 @@ export interface AutopilotConfig {
   messages_per_cycle: number;
   cycle_interval_hours: number;
   delay_between_ms: number;
+  delay_min_ms: number;
+  delay_max_ms: number;
+  daily_limit_per_session: number;
+  typing_simulation: boolean;
+  break_after_messages: number;
+  break_duration_ms: number;
   status: 'stopped' | 'running';
   last_cycle_at: string | null;
   next_cycle_at: string | null;

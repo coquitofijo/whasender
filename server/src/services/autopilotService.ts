@@ -3,7 +3,7 @@ import { getIO } from '../socket/socketManager';
 import { SessionManager } from '../whatsapp/SessionManager';
 import { renderTemplate } from './templateService';
 import { phoneToJid } from '../utils/jidHelper';
-import { sleep } from '../utils/delay';
+import { sleep, randomDelay } from '../utils/delay';
 
 interface AutopilotConfig {
   id: string;
@@ -11,6 +11,12 @@ interface AutopilotConfig {
   messages_per_cycle: number;
   cycle_interval_hours: number;
   delay_between_ms: number;
+  delay_min_ms: number;
+  delay_max_ms: number;
+  daily_limit_per_session: number;
+  typing_simulation: boolean;
+  break_after_messages: number;
+  break_duration_ms: number;
   status: string;
   last_cycle_at: string | null;
   next_cycle_at: string | null;
@@ -89,6 +95,12 @@ class AutopilotService {
     messages_per_cycle?: number;
     cycle_interval_hours?: number;
     delay_between_ms?: number;
+    delay_min_ms?: number;
+    delay_max_ms?: number;
+    daily_limit_per_session?: number;
+    typing_simulation?: boolean;
+    break_after_messages?: number;
+    break_duration_ms?: number;
   }): Promise<AutopilotConfig> {
     const config = await this.getConfig();
     const { rows } = await pool.query(
@@ -97,13 +109,25 @@ class AutopilotService {
         messages_per_cycle = COALESCE($2, messages_per_cycle),
         cycle_interval_hours = COALESCE($3, cycle_interval_hours),
         delay_between_ms = COALESCE($4, delay_between_ms),
+        delay_min_ms = COALESCE($5, delay_min_ms),
+        delay_max_ms = COALESCE($6, delay_max_ms),
+        daily_limit_per_session = COALESCE($7, daily_limit_per_session),
+        typing_simulation = COALESCE($8, typing_simulation),
+        break_after_messages = COALESCE($9, break_after_messages),
+        break_duration_ms = COALESCE($10, break_duration_ms),
         updated_at = NOW()
-       WHERE id = $5 RETURNING *`,
+       WHERE id = $11 RETURNING *`,
       [
         updates.message_templates ? JSON.stringify(updates.message_templates) : null,
         updates.messages_per_cycle ?? null,
         updates.cycle_interval_hours ?? null,
         updates.delay_between_ms ?? null,
+        updates.delay_min_ms ?? null,
+        updates.delay_max_ms ?? null,
+        updates.daily_limit_per_session ?? null,
+        updates.typing_simulation ?? null,
+        updates.break_after_messages ?? null,
+        updates.break_duration_ms ?? null,
         config.id,
       ]
     );
@@ -288,9 +312,37 @@ class AutopilotService {
   }
 
   /**
+   * Get today's sent count for a session from session_daily_counts.
+   */
+  private async getDailySentCount(sessionId: string): Promise<number> {
+    const { rows } = await pool.query(
+      'SELECT sent_count FROM session_daily_counts WHERE session_id = $1 AND date = CURRENT_DATE',
+      [sessionId]
+    );
+    return rows[0]?.sent_count || 0;
+  }
+
+  /**
+   * Increment today's sent/failed count for a session.
+   */
+  private async incrementDailyCount(sessionId: string, field: 'sent_count' | 'failed_count'): Promise<void> {
+    await pool.query(
+      `INSERT INTO session_daily_counts (session_id, date, ${field})
+       VALUES ($1, CURRENT_DATE, 1)
+       ON CONFLICT (session_id, date) DO UPDATE SET ${field} = session_daily_counts.${field} + 1`,
+      [sessionId]
+    );
+  }
+
+  /**
    * Run a single cycle with round-robin sending.
    * Each phone gets a different template: phone[i] uses templates[i % templates.length]
-   * Detects restrictions: if a session fails X messages in a row, flags it as restricted.
+   * Anti-ban features:
+   * - Random delay between min/max (human-like timing)
+   * - Typing simulation (composing presence before sending)
+   * - Daily limit per session (prevents oversaturation)
+   * - Periodic breaks every N messages (simulates human pauses)
+   * - Consecutive failure detection (restriction flagging)
    */
   private async runCycle(config: AutopilotConfig, assignments: Assignment[]): Promise<void> {
     const io = getIO();
@@ -299,11 +351,28 @@ class AutopilotService {
     // Track consecutive failures per session for restriction detection
     const consecutiveFailures: Map<string, number> = new Map();
     const restrictedInCycle: Set<string> = new Set();
+    const dailyLimitReached: Set<string> = new Set();
 
-    // Pre-fetch contacts for each assignment
+    // Pre-fetch contacts for each assignment and check daily limits
     const contactQueues: Map<string, any[]> = new Map();
 
     for (const a of assignments) {
+      // Check daily limit before fetching contacts
+      const dailySent = await this.getDailySentCount(a.session_id);
+      const remaining = config.daily_limit_per_session - dailySent;
+
+      if (remaining <= 0) {
+        dailyLimitReached.add(a.session_id);
+        const limitMsg = `${a.session_name}: limite diario alcanzado (${dailySent}/${config.daily_limit_per_session})`;
+        io.emit('autopilot:log', { message: limitMsg, type: 'warning' });
+        await this.persistLog(limitMsg, 'warning');
+        console.log(`[Autopilot] ${a.session_name} daily limit reached (${dailySent}/${config.daily_limit_per_session})`);
+        continue;
+      }
+
+      // Fetch contacts, capped by remaining daily allowance
+      const fetchLimit = Math.min(config.messages_per_cycle, remaining);
+
       const { rows } = await pool.query(
         `SELECT c.id, c.phone, c.name, c.custom_fields
          FROM contacts c
@@ -313,18 +382,31 @@ class AutopilotService {
            )
          ORDER BY c.created_at ASC
          LIMIT $2`,
-        [a.list_id, config.messages_per_cycle]
+        [a.list_id, fetchLimit]
       );
       contactQueues.set(a.session_id, rows);
       consecutiveFailures.set(a.session_id, 0);
 
       if (rows.length === 0) {
         console.log(`[Autopilot] No more contacts for ${a.session_name} in ${a.list_name}`);
+      } else if (fetchLimit < config.messages_per_cycle) {
+        const capMsg = `${a.session_name}: limitado a ${fetchLimit} msgs (quedan ${remaining} del limite diario)`;
+        io.emit('autopilot:log', { message: capMsg, type: 'info' });
+        await this.persistLog(capMsg, 'info');
       }
+    }
+
+    // Check if all sessions hit daily limit
+    if (dailyLimitReached.size === assignments.length) {
+      const allLimitMsg = 'Todas las sesiones alcanzaron el limite diario. Ciclo omitido.';
+      io.emit('autopilot:log', { message: allLimitMsg, type: 'warning' });
+      await this.persistLog(allLimitMsg, 'warning');
+      return;
     }
 
     let totalSent = 0;
     let totalFailed = 0;
+    let totalMessages = 0; // counter for break logic
 
     for (let msgIdx = 0; msgIdx < config.messages_per_cycle; msgIdx++) {
       for (let phoneIdx = 0; phoneIdx < assignments.length; phoneIdx++) {
@@ -332,8 +414,9 @@ class AutopilotService {
 
         const assignment = assignments[phoneIdx];
 
-        // Skip sessions already flagged as restricted during this cycle
+        // Skip sessions already flagged as restricted or at daily limit
         if (restrictedInCycle.has(assignment.session_id)) continue;
+        if (dailyLimitReached.has(assignment.session_id)) continue;
 
         const queue = contactQueues.get(assignment.session_id);
         if (!queue || msgIdx >= queue.length) continue;
@@ -349,6 +432,17 @@ class AutopilotService {
           continue;
         }
 
+        // ANTI-BAN: Take a break every N messages
+        if (config.break_after_messages > 0 && totalMessages > 0 && totalMessages % config.break_after_messages === 0) {
+          const breakSecs = Math.round(config.break_duration_ms / 1000);
+          const breakMsg = `Pausa de ${breakSecs}s despues de ${totalMessages} mensajes...`;
+          io.emit('autopilot:log', { message: breakMsg, type: 'info' });
+          await this.persistLog(breakMsg, 'info');
+          console.log(`[Autopilot] Taking ${breakSecs}s break after ${totalMessages} messages`);
+          await sleep(config.break_duration_ms);
+          if (!this.running) return;
+        }
+
         // Each phone gets a different template (rotates through the list)
         const template = templates[phoneIdx % templates.length];
 
@@ -361,7 +455,20 @@ class AutopilotService {
         const jid = phoneToJid(contact.phone);
 
         try {
+          // ANTI-BAN: Simulate typing before sending
+          if (config.typing_simulation) {
+            try {
+              await sock.sendPresenceUpdate('composing', jid);
+              await sleep(randomDelay(1500, 4000));
+            } catch (_) { /* presence update failures are non-critical */ }
+          }
+
           const result = await sock.sendMessage(jid, { text: message });
+
+          // ANTI-BAN: Send "paused" presence after message (stopped typing)
+          if (config.typing_simulation) {
+            try { await sock.sendPresenceUpdate('paused', jid); } catch (_) {}
+          }
 
           await pool.query(
             `INSERT INTO message_logs (campaign_id, contact_id, contact_phone, status, wa_message_id, session_id)
@@ -370,6 +477,9 @@ class AutopilotService {
           );
 
           totalSent++;
+          totalMessages++;
+          await this.incrementDailyCount(assignment.session_id, 'sent_count');
+
           // Reset consecutive failures on success
           consecutiveFailures.set(assignment.session_id, 0);
 
@@ -395,6 +505,9 @@ class AutopilotService {
           );
 
           totalFailed++;
+          totalMessages++;
+          await this.incrementDailyCount(assignment.session_id, 'failed_count');
+
           const fails = (consecutiveFailures.get(assignment.session_id) || 0) + 1;
           consecutiveFailures.set(assignment.session_id, fails);
 
@@ -420,13 +533,16 @@ class AutopilotService {
           }
         }
 
-        await sleep(config.delay_between_ms);
+        // ANTI-BAN: Random delay between messages (human-like timing)
+        const delay = randomDelay(config.delay_min_ms, config.delay_max_ms);
+        await sleep(delay);
       }
     }
 
     const summaryMsg = `Ciclo completado: ${totalSent} enviados, ${totalFailed} fallidos` +
-      (restrictedInCycle.size > 0 ? `, ${restrictedInCycle.size} restringido(s)` : '');
-    console.log(`[Autopilot] Cycle finished: ${totalSent} sent, ${totalFailed} failed, ${restrictedInCycle.size} restricted`);
+      (restrictedInCycle.size > 0 ? `, ${restrictedInCycle.size} restringido(s)` : '') +
+      (dailyLimitReached.size > 0 ? `, ${dailyLimitReached.size} al limite diario` : '');
+    console.log(`[Autopilot] Cycle finished: ${totalSent} sent, ${totalFailed} failed, ${restrictedInCycle.size} restricted, ${dailyLimitReached.size} at daily limit`);
     io.emit('autopilot:log', { message: summaryMsg, type: 'success' });
     await this.persistLog(summaryMsg, 'success');
     await this.cleanOldLogs();

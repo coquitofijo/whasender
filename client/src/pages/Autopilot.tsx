@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useSocket } from '../context/SocketContext';
 import type { AutopilotConfig, AutopilotAssignment, Session, ContactList } from '../types';
-import { Play, Square, Plus, Trash2, Bot, Clock, Zap, MessageSquare } from 'lucide-react';
+import { Play, Square, Plus, Trash2, Bot, Clock, Zap, MessageSquare, Shield } from 'lucide-react';
 
 interface LogEntry {
   time: string;
@@ -135,6 +135,12 @@ export default function Autopilot() {
         messages_per_cycle: config.messages_per_cycle,
         cycle_interval_hours: config.cycle_interval_hours,
         delay_between_ms: config.delay_between_ms,
+        delay_min_ms: config.delay_min_ms,
+        delay_max_ms: config.delay_max_ms,
+        daily_limit_per_session: config.daily_limit_per_session,
+        typing_simulation: config.typing_simulation,
+        break_after_messages: config.break_after_messages,
+        break_duration_ms: config.break_duration_ms,
       });
       if (data.message_templates?.length > 0) setConfig(data);
     } catch (err) {
@@ -229,7 +235,7 @@ export default function Autopilot() {
             <div className="w-3 h-3 bg-emerald-400 rounded-full animate-pulse" />
             <span className="text-emerald-300 font-medium">Autopilot activo</span>
             <span className="text-emerald-400/60 text-sm">
-              {assignments.length} tel · {config.messages_per_cycle} msgs/ciclo · {templates.length} templates · cada {config.cycle_interval_hours}h
+              {assignments.length} tel · {config.messages_per_cycle} msgs/ciclo · {config.delay_min_ms / 1000}-{config.delay_max_ms / 1000}s delay · {config.daily_limit_per_session}/dia · cada {config.cycle_interval_hours}h
             </span>
           </div>
           {countdown && (
@@ -263,12 +269,58 @@ export default function Autopilot() {
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50" />
               </div>
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Delay (seg)</label>
-                <input type="number" value={config.delay_between_ms / 1000}
-                  onChange={e => setConfig({ ...config, delay_between_ms: (parseFloat(e.target.value) || 3) * 1000 })}
-                  disabled={isRunning} min={1} step={0.5}
+                <label className="block text-sm text-slate-400 mb-1">Limite diario/tel</label>
+                <input type="number" value={config.daily_limit_per_session}
+                  onChange={e => setConfig({ ...config, daily_limit_per_session: parseInt(e.target.value) || 200 })}
+                  disabled={isRunning} min={10}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50" />
               </div>
+            </div>
+
+            {/* Anti-ban settings */}
+            <div className="border-t border-slate-800 pt-3">
+              <h4 className="text-sm font-medium text-emerald-400 mb-3 flex items-center gap-2">
+                <Shield size={14} /> Anti-Ban
+              </h4>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Delay min (seg)</label>
+                  <input type="number" value={config.delay_min_ms / 1000}
+                    onChange={e => setConfig({ ...config, delay_min_ms: (parseFloat(e.target.value) || 8) * 1000 })}
+                    disabled={isRunning} min={3} step={1}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50" />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Delay max (seg)</label>
+                  <input type="number" value={config.delay_max_ms / 1000}
+                    onChange={e => setConfig({ ...config, delay_max_ms: (parseFloat(e.target.value) || 15) * 1000 })}
+                    disabled={isRunning} min={5} step={1}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Pausa cada N msgs</label>
+                  <input type="number" value={config.break_after_messages}
+                    onChange={e => setConfig({ ...config, break_after_messages: parseInt(e.target.value) || 25 })}
+                    disabled={isRunning} min={5}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50" />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Duracion pausa (seg)</label>
+                  <input type="number" value={config.break_duration_ms / 1000}
+                    onChange={e => setConfig({ ...config, break_duration_ms: (parseInt(e.target.value) || 60) * 1000 })}
+                    disabled={isRunning} min={10}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50" />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={config.typing_simulation}
+                  onChange={e => setConfig({ ...config, typing_simulation: e.target.checked })}
+                  disabled={isRunning}
+                  className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 disabled:opacity-50" />
+                <span className="text-sm text-slate-400">Simular &quot;escribiendo...&quot; antes de enviar</span>
+              </label>
             </div>
 
             {!isRunning && (
@@ -279,8 +331,9 @@ export default function Autopilot() {
             )}
 
             <div className="bg-slate-800/50 rounded-lg p-3 text-xs text-slate-500">
-              <p><strong className="text-slate-400">Total por ciclo:</strong> {assignments.length * config.messages_per_cycle} msgs en ~{Math.round(assignments.length * config.messages_per_cycle * config.delay_between_ms / 60000)} min</p>
-              <p><strong className="text-slate-400">Total por dia:</strong> ~{Math.round(assignments.length * config.messages_per_cycle * (24 / config.cycle_interval_hours))} msgs ({Math.round(config.messages_per_cycle * (24 / config.cycle_interval_hours))} por tel)</p>
+              <p><strong className="text-slate-400">Delay:</strong> {config.delay_min_ms / 1000}s - {config.delay_max_ms / 1000}s aleatorio entre msgs</p>
+              <p><strong className="text-slate-400">Total por ciclo:</strong> {assignments.length * config.messages_per_cycle} msgs en ~{Math.round(assignments.length * config.messages_per_cycle * ((config.delay_min_ms + config.delay_max_ms) / 2) / 60000)} min</p>
+              <p><strong className="text-slate-400">Limite diario:</strong> {config.daily_limit_per_session} msgs/telefono · Pausa {config.break_duration_ms / 1000}s cada {config.break_after_messages} msgs</p>
               <p className="mt-1"><strong className="text-slate-400">Rotacion:</strong> Tel 1 usa T1, Tel 2 usa T2, etc.</p>
             </div>
           </div>
